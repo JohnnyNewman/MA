@@ -360,8 +360,11 @@ class AirfoilModel(LightningModule):
         
         self.batch_size = 128
         #self.hparams.batch_size = 64
+        self.lr=1e-3
         
-        c1 = 8
+        self.train_variance = 1.0
+        
+        c1 = 16
         c2 = 8
         k2 = 8
         c3 = 8 
@@ -384,17 +387,19 @@ class AirfoilModel(LightningModule):
         self.layer_3 = torch.nn.Linear(287, 8)
         
         
-        self.layer_5 = torch.nn.Linear(66, 32)
+        c_res = 32
         
-        self.layer_6 = torch.nn.Linear(32, 32)
+        self.layer_5 = torch.nn.Linear(66, c_res)
+        
+        self.layer_6 = torch.nn.Linear(c_res, c_res)
         self.relu_6 = nn.ReLU()
-        self.layer_7 = torch.nn.Linear(32, 32)
+        self.layer_7 = torch.nn.Linear(c_res, c_res)
         self.relu_7 = nn.ReLU()
-        self.layer_8 = torch.nn.Linear(32, 32)
+        self.layer_8 = torch.nn.Linear(c_res, c_res)
         self.relu_8 = nn.ReLU()
-        self.layer_9 = torch.nn.Linear(32, 32)
+        self.layer_9 = torch.nn.Linear(c_res, c_res)
         self.relu_9 = nn.ReLU()
-        self.layer_10 = torch.nn.Linear(32, 64)
+        self.layer_10 = torch.nn.Linear(c_res, 64)
         self.relu_10 = nn.ReLU()
         
         c4 = 32
@@ -405,15 +410,13 @@ class AirfoilModel(LightningModule):
         self.relu_12 = nn.ReLU()
         self.deconv_13 = nn.ConvTranspose1d(in_channels=c5, out_channels=c6, kernel_size=7, stride=3, dilation=3)
         self.relu_13 = nn.ReLU()
-        self.deconv_14 = nn.ConvTranspose1d(in_channels=c6, out_channels=4, kernel_size=7, stride=1, dilation=1)
+        self.deconv_14 = nn.ConvTranspose1d(in_channels=c6, out_channels=1, kernel_size=7, stride=1, dilation=1)
         
         
         self.loss_crit = nn.MSELoss()
-
-    def forward(self, x, Ma, AOA):
-        #batch_size, channels, width, height = x.size()
-        
-        ### Encoder
+    
+    
+    def airfoil_encoder(self, x):
         
         xxx = torch.cat((x, x, x), dim=2)
         x_0 = self.layer_0(xxx)
@@ -428,12 +431,9 @@ class AirfoilModel(LightningModule):
         x_2 = self.relu_2(self.layer_2(x_1))
         x_3 = self.layer_3(x_2).view(-1, 1, 64)
         
-        #print(x_3.shape, AOA.shape, Ma.shape)
-                
-        r = torch.randn_like(x_3)
-        x_3 = x_3 + r
-        
-        ### Decoder
+        return x_3
+    
+    def airfoil_predictor(self, x_3, Ma, AOA):
         
         x_4 = torch.cat((x_3, AOA.view(-1, 1, 1), Ma.view(-1, 1, 1)), dim=2)
         
@@ -465,35 +465,60 @@ class AirfoilModel(LightningModule):
         #print(d,d0)
         
         return y[:,:,d0:d0-d]
+    
+    def forward(self, x, Ma, AOA, variance=1.0):
+        #batch_size, channels, width, height = x.size()
+        
+        ### Encoder
+        
+        x_3 = self.airfoil_encoder(x)
+        
+        #print(x_3.shape, AOA.shape, Ma.shape)
+        
+        r = torch.randn_like(x_3, device=self.device)
+        x_3 = x_3 + r*variance
+        
+        ### Decoder
+        
+        y = self.airfoil_predictor(x_3, Ma, AOA)
+        
+        return y
 
     
     def training_step(self, batch, batch_idx):
         ma, aoa, dv, x, y = batch
-        x_hat = self(x, ma, aoa)
-        loss = F.mse_loss(x_hat, y)
+        #x_hat = self(x, ma, aoa)
+        x_3 = self.airfoil_encoder(x)
+        r = torch.randn_like(x_3, device=self.device)
+        x_3 = x_3 + r*self.train_variance
+        x_hat = self.airfoil_predictor(x_3, ma, aoa)
+        
+        #loss = F.mse_loss(x_hat, y[:,:2,:])
+        loss = F.mse_loss(x_hat, y[:,0,:].view(-1,1,192))
         # Logging to TensorBoard by default
         self.log('train_loss', loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
         ma, aoa, dv, x, y = batch
-        x_hat = self(x, ma, aoa)
-        loss = F.mse_loss(x_hat, y)
+        x_hat = self(x, ma, aoa, 0.)
+        #loss = F.mse_loss(x_hat, y[:,:2,:])
+        loss = F.mse_loss(x_hat, y[:,0,:].view(-1,1,192))
         # Logging to TensorBoard by default
         self.log('val_loss', loss)
         return loss
         
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
     
     def train_dataloader(self):
         #print("get dataloader ", self.batch_size)
-        return DataLoader(train_dataset, batch_size=self.batch_size)    
+        return DataLoader(train_dataset, batch_size=self.batch_size, num_workers=0, shuffle=True, pin_memory=True)    
     
     def val_dataloader(self):
-        return DataLoader(test_dataset, batch_size=len(test_dataset))
-
+        return DataLoader(test_dataset, batch_size=len(test_dataset), num_workers=0, pin_memory=True)
+    
 
 if __name__ == "__main__":
     

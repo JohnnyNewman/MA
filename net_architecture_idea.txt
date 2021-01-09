@@ -1,0 +1,36 @@
+
+Encoder:
+	Select Random 0.5 of Input Nodes (192)
+
+	4*
+		3/5 1D-Conv, 8 OutputChannel
+		ReLU
+		3/5 1D-Conv, 8 OutputChannel
+		ReLU
+
+	Concatenate 4*8 Channels
+
+	MaxPool? 1x1D Convolution (32 in, 8 out)?
+
+	Fully Connected (192/2)*32 Input [+ AOA + MA], 32/64/128 Output --> wahrscheinlich zu viel
+
+	3*32 Fully Connected  + Skip Connections + BatchNorm + PReLU
+
+Decoder/Generator:
+	
+	3*32 Fully Connected  + Skip Connections + BatchNorm + PReLU
+	
+	Fully Connected 32 in, 192*4 out
+	
+	4*Deconvolution
+	
+	
+
+Discriminator:
+	
+	Convolution  + Skip Connections
+	
+	Fully Connected
+	
+	SoftMax
+	
